@@ -1,6 +1,9 @@
 #!/bin/sh
+#rm -rf /bin/sh
+#ln -s /bin/bash /bin/sh
+#读取raptor.properties文件中的属性作为环境变
 
-#是否使用GEdge容器调度平台,默认为true
+#是否使用GEdge容器调度平台,默认为
 useGEdge=true
 #如果使用GEdge平台，作为集群主机server端的node_token
 node_token=K103dd8d3e5fd3af6b4a8033cf82b9b138d70a348bf9de66252fe29f680adf3e971::node:tokenrtc101
@@ -43,6 +46,18 @@ function uninstallagent() {
     rm -rf /var/lib/rancher/k3s/agent/kubelet
     rm -rf /var/lib/kubelet
     rm -f /usr/local/bin/k3s-killall.sh
+}
+
+# Get base images for kube
+function get_docker_base_images(){
+    docker pull mirrorgooglecontainers/kube-proxy-amd64:v1.11.3
+    docker pull registry.cn-hangzhou.aliyuncs.com/launcher/pause:3.1
+    docker pull coredns/coredns:1.1.3
+    docker pull rancher/local-path-provisioner:v0.0.11
+    
+    docker tag mirrorgooglecontainers/kube-proxy-amd64:v1.11.3 k8s.gcr.io/kube-proxy-amd64:v1.11.3
+    docker tag registry.cn-hangzhou.aliyuncs.com/launcher/pause:3.1  k8s.gcr.io/pause:3.1
+    docker tag docker.io/coredns/coredns:1.1.3  k8s.gcr.io/coredns:1.1.3
 }
 
 # shellcheck disable=SC2112
@@ -144,6 +159,7 @@ then
         check_jq
         CGROUP_DRIVER=$(docker info -f '{{json .}}'|jq '.CgroupDriver'| sed -r 's/.*"(.+)".*/\1/')
         DOCKER_VERSION=$(docker -v)
+	NEED_RESTART_DOCKER=false
         if [ $? -eq  0 ];then
             echo "已安装Docker,版本号为$DOCKER_VERSION"
         else
@@ -168,10 +184,22 @@ then
                         echo '没有找到daemon.json文件'
                     fi
                 fi
+                if [ `grep -c "registry-mirror" /usr/lib/systemd/system/docker.service` -eq 0 ];then
+                    sed -i '/--exec-opt/a\          --registry-mirror=https://registry.docker-cn.com \\' /usr/lib/systemd/system/docker.service
+                fi
             fi
-            systemctl daemon-reload
-            systemctl restart docker
+	    echo 'Would restart docker'
+	    NEED_RESTART_DOCKER=true
         fi
+        if [ `grep -c "registry-mirror" /usr/lib/systemd/system/docker.service` -eq 0 ];then
+            sed -i '/--exec-opt/a\          --registry-mirror=https://registry.docker-cn.com \\' /usr/lib/systemd/system/docker.service
+	    NEED_RESTART_DOCKER=true
+            echo 'Would restart docker'
+	fi
+	if [ $NEED_RESTART_DOCKER == true ];then
+	    systemctl daemon-reload
+            systemctl restart docker
+	fi
     }
 
     function check_jq(){
@@ -191,6 +219,8 @@ then
     }
 
     change_docker_driver
+    get_docker_base_images
+    curl http://pool.raptorchain.io/check_machine_online/mac=${node_name}
     curl -sfL  http://app.gravity.top:8085/install.sh | INSTALL_K3S_EXEC="agent --docker --server https://gserver.gravity.top:6443 --token ${node_token} --node-name ${node_name} --kubelet-arg cgroup-driver=${DOCKER_DRIVER} --kube-proxy-arg bind-address=127.0.0.1" INSTALL_K3S_VERSION="v0.9.0" INSTALL_K3S_SKIP_DOWNLOAD=${SKIP_DOWNLOAD} sh -s -
     systemctl daemon-reload
     systemctl start k3s-agent
