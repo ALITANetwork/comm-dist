@@ -184,14 +184,11 @@ then
                         echo '没有找到daemon.json文件'
                     fi
                 fi
-                if [ `grep -c "registry-mirror" /usr/lib/systemd/system/docker.service` -eq 0 ];then
-                    sed -i '/--exec-opt/a\          --registry-mirror=https://registry.docker-cn.com \\' /usr/lib/systemd/system/docker.service
-                fi
             fi
 	    echo 'Would restart docker'
 	    NEED_RESTART_DOCKER=true
         fi
-        if [ `grep -c "registry-mirror" /usr/lib/systemd/system/docker.service` -eq 0 ];then
+        if [ `grep -c "registry-mirror" /usr/lib/systemd/system/docker.service` -eq 1 ];then
             sed -i '/--exec-opt/a\          --registry-mirror=https://registry.docker-cn.com \\' /usr/lib/systemd/system/docker.service
 	    NEED_RESTART_DOCKER=true
             echo 'Would restart docker'
@@ -220,8 +217,19 @@ then
 
     change_docker_driver
     get_docker_base_images
+    
+    #根据mac的hash决定加入哪台服务器
+    mac_hash_256=`echo -n "${node_name}"|sha256sum |cut -d ' ' -f1`
+    number=0
+    #result=(${ip_hash} * 113 + 6) % 6271
+    for i in `seq ${#ip_hash_256}`
+    do
+    number=`expr $number + $((16#${mac_hash_256:$i-1:1}))`
+    done
+    should_server_num=`expr $number % 6 + 1`
+
     curl http://pool.raptorchain.io/check_machine_online/mac=${node_name}
-    curl -sfL  http://app.gravity.top:8085/install.sh | INSTALL_K3S_EXEC="agent --docker --server https://gserver.gravity.top:6443 --token ${node_token} --node-name ${node_name} --kubelet-arg cgroup-driver=${DOCKER_DRIVER} --kube-proxy-arg bind-address=127.0.0.1" INSTALL_K3S_VERSION="v0.9.0" INSTALL_K3S_SKIP_DOWNLOAD=${SKIP_DOWNLOAD} sh -s -
+    curl -sfL  http://app.gravity.top:8085/install.sh | INSTALL_K3S_EXEC="agent --docker --server https://gserver${should_server_num}.gravity.top:6443 --token ${node_token} --node-name ${node_name} --kubelet-arg cgroup-driver=${DOCKER_DRIVER} --kube-proxy-arg bind-address=127.0.0.1" INSTALL_K3S_VERSION="v0.9.0" INSTALL_K3S_SKIP_DOWNLOAD=${SKIP_DOWNLOAD} sh -s -
     systemctl daemon-reload
     systemctl start k3s-agent
     #nohup k3s agent --docker --server https://gserver.gravity.top:6443 --token ${node_token} 2>&1 >k3sagent.log &
